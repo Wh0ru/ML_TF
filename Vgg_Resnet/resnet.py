@@ -7,6 +7,8 @@ from pre_image import get_files,get_batch
 from tensorflow.python import pywrap_tensorflow
 from tensorflow.contrib.slim.nets import resnet_utils
 from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
+from test import get_test_files,get_test_batch
+import pandas as pd
 
 train_dir='train/'
 IMG_W=224
@@ -18,6 +20,9 @@ LOGDIR='logs'
 train,train_label=get_files(train_dir)
 train_batch,train_label_batch=get_batch(train,train_label,
                                         IMG_W,IMG_H,BATCH_SIZE,CAPACITY)
+
+test=get_test_files()
+test_batch=get_test_batch(test,IMG_W,IMG_H,BATCH_SIZE,CAPACITY)
 
 num_layers=101
 scope='resnet_v1_%d'%num_layers
@@ -274,9 +279,20 @@ def train():
                 loss_val,acc_val,score=sess.run([loss,acc,cls_score],feed_dict={X:xs,y_:ys})
                 print('loss:', loss_val, 'accuracy:', acc_val)
                 print(score)
-            if epoch%10==0:
-                saver.save(sess,'model/vgg16_iter_{:d}'.format(epoch)+'.ckpt')
-                print('save model!')
+            if epoch%15==0 and epoch!=0:
+                for j in range(800):
+                    x_s=sess.run(test_batch)
+                    score=sess.run([cls_score], feed_dict={X:x_s})
+                    dog_pre=score[:,1]
+                    dog_pre = np.maximum(0.005, dog_pre)
+                    dog_pre = np.minimum(0.995, dog_pre)
+                    length=np.arange(len(dog_pre))+1
+                    dog_arr=np.array((length,dog_pre))
+                    dog=pd.DataFrame(dog_arr.T,columns=['id','label'])
+                    dog.to_csv('csv/dog_{:d}.csv'.format(j),index=False)
+
+                # saver.save(sess,'model/vgg16_iter_{:d}'.format(epoch)+'.ckpt')
+                # print('save model!')
     except tf.errors.OutOfRangeError:
         print('Done training -- epoch limit reached')
     finally:coord.request_stop()
