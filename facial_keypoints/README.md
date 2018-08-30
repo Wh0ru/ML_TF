@@ -1,2 +1,3 @@
-# Flower Cls
-### Keras版本的flower分类，用了InceptionV3和Resnet50的两个预训练模型，在cls_pred时取两个模型结果的平均值
+# Kaggles-facial-keypoints-detection
+### 采用FCN的方法，因为在面部关键点检测的时候对空间信息的要求较高，FCN将如VGG模型的Fullconnect层都变为Conv2D层，在用上采样恢复为input的shape，
+### 这样能保留较多的空间信息。采用guassian——kernel为关键点创建heatmap，作为label。
