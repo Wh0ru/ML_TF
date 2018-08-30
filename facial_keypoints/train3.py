@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from skimage import transform
 from skimage.transform import SimilarityTransform, AffineTransform
-
+from flip import transform_imgs
 from sklearn import metrics
 from keras.optimizers import Adam
 from guassian import load2d
@@ -17,6 +17,9 @@ from keras.regularizers import l2
 from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau,TensorBoard
 from pre_data import get_data
 from keras.preprocessing.image import ImageDataGenerator
+
+landmark_order = {"orig" : [0,1,2,3,4,5,6,7,8,9,11,12],
+                  "new"  : [1,0,4,5,2,3,8,9,6,7,12,11]}
 
 IMAGE_SIZE=96
 kernel_size=24
@@ -32,28 +35,6 @@ Ntrain=int(X_train.shape[0]*prop_train)
 X_tra, y_tra, X_val,y_val = X_train[:Ntrain],y_train[:Ntrain],X_train[Ntrain:],y_train[Ntrain:]
 del X_train,y_train
 
-def transform_img(data,
-                  max_rotation=0.01,
-                  max_shift=2,
-                  max_shear=0,
-                  max_scale=0.01, mode="edge"):
-
-    scale = (np.random.uniform(1 - max_scale, 1 + max_scale),
-             np.random.uniform(1 - max_scale, 1 + max_scale))
-    rotation_tmp = np.random.uniform(-1 * max_rotation, max_rotation)
-    translation = (np.random.uniform(-1 * max_shift, max_shift),
-                   np.random.uniform(-1 * max_shift, max_shift))
-    shear = np.random.uniform(-1 * max_shear, max_shear)
-    tform = AffineTransform(
-        scale=scale,
-        rotation=np.deg2rad(rotation_tmp),
-        translation=translation,
-        shear=np.deg2rad(shear)
-    )
-
-    data=transform.warp(data, tform, mode=mode)
-    return data
-
 def get_batch(X_tra, y_tra):
     while True:
         for start in range(0,len(X_tra),BATCH_SIZE):
@@ -61,16 +42,13 @@ def get_batch(X_tra, y_tra):
             y_batch=[]
             w_batch=[]
             end=min(start+BATCH_SIZE,len(X_tra))
-            train_batch=X_tra[start:end]
-            label_batch=y_tra[start:end]
-            for i in train_batch:
-                x_batch.append(transform_img(i))
-            for i in label_batch:
-                y_batch.append(transform_img(i))
+            x_batch.append(X_tra[start:end])
+            y_batch.append(y_tra[start:end])
             w_batch.append(find_weight(y_tra[start:end]))
-            x_batch=np.array(x_batch)
-            y_batch=np.array(y_batch)
+            x_batch=np.vstack(x_batch)
+            y_batch=np.vstack(y_batch)
             w_batch=np.vstack(w_batch)
+            x_batch,y_batch,w_batch=transform_imgs([x_batch,y_batch,w_batch],landmark_order)
             yield x_batch,y_batch,w_batch
 
 img_input=Input(shape=(IMAGE_SIZE,IMAGE_SIZE,1))
@@ -79,18 +57,19 @@ x=Conv2D(64,(3,3),activation='relu',padding='same')(img_input)
 x=Conv2D(64,(3,3),activation='relu',padding='same')(x)
 x=BatchNormalization()(x)
 x=MaxPooling2D(pool_size=(2,2),strides=(2,2))(x)
-
+x=Dropout(0.1)(x)
 
 x=Conv2D(128,(3,3),activation='relu',padding='same')(x)
 x=Conv2D(128,(3,3),activation='relu',padding='same')(x)
 x=BatchNormalization()(x)
 x=MaxPooling2D(pool_size=(2,2),strides=(2,2))(x)
+x=Dropout(0.1)(x)
 
 
 x=Conv2D(n,(kernel_size,kernel_size),activation='relu',padding='same')(x)
 x=Conv2D(n,(1,1),activation='relu',padding='same')(x)
 x=BatchNormalization()(x)
-
+x=Dropout(0.1)(x)
 
 x=Conv2DTranspose(15,kernel_size=(4,4),strides=(4,4),use_bias=False)(x)
 output=Reshape((-1,1))(x)

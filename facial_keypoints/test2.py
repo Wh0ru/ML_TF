@@ -17,7 +17,7 @@ def get_test_batch(X_test):
         X_batch.append(X_test[start:end])
         yield X_batch
 
-model=load_model('weights.best_01.hdf5')
+model=load_model('weights.best_00.hdf5')
 y_pred=model.predict(X_test)
 y_pred=y_pred.reshape(-1,output_height,output_width,nClasses)
 y_pred=transfer_target(y_pred,thresh=0,n_points=25)
