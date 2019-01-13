@@ -1,128 +1,104 @@
-import cv2
+from net import resnet18
+from keras.utils import to_categorical
+from keras.optimizers import Adam,SGD
+from keras.losses import categorical_crossentropy
+from keras.callbacks import ModelCheckpoint,ReduceLROnPlateau,EarlyStopping
+import os
+from sklearn.model_selection import train_test_split
+from aug import Aug
+from sklearn.metrics import classification_report
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold
-from sklearn import metrics
-from sklearn.preprocessing import OneHotEncoder
-import keras
-from pre_data import get_data,augment,get_test
-from keras.models import Model
-from keras.optimizers import Adam,SGD
-from keras.applications.inception_v3 import InceptionV3
-from keras.applications.vgg19 import VGG19
-from keras.utils import np_utils
-from keras.layers import Dense, Input, Flatten, Dropout, GlobalAveragePooling2D,MaxPooling2D,Conv2D
-from keras.layers.normalization import BatchNormalization
-from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from net import Net
+import matplotlib.pyplot as plt
+import cv2
+# np.random.seed(2019)
 
-IMAGE_SIZE=28
-EPOCHS=30
-CHANNELS=1
-BATCH_SIZE=128
-nClasses=10
-N_FLOD=5
+def callback():
+    checkpoint=ModelCheckpoint(save_path,monitor='val_acc',verbose=1,save_best_only=True,save_weights_only=True)
+    lrducer=ReduceLROnPlateau(monitor='val_acc',verbose=1,patience=3,min_lr=1e-7,factor=0.4)
+    earlystop=EarlyStopping(monitor='val_acc',patience=10,verbose=1)
+    callbacks=[checkpoint,lrducer,earlystop]
+    return callbacks
 
 
-def model():
-    input_tensor=Input(shape=(IMAGE_SIZE,IMAGE_SIZE,CHANNELS))
-
-    x = Conv2D(filters=64, kernel_size=(3, 3), activation='elu')(input_tensor)
-    x = BatchNormalization()(x)
-    x = Conv2D(filters=64, kernel_size=(3, 3), activation='elu')(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.1)(x)
-
-    x = Conv2D(filters=128, kernel_size=(3, 3), activation='elu')(x)
-    x = BatchNormalization()(x)
-    x = Conv2D(filters=128, kernel_size=(3, 3), activation='elu')(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.1)(x)
-
-    x = GlobalAveragePooling2D()(x)
-    x = Dense(512, activation='elu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.5)(x)
-
-    x = Dense(1024, activation='elu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.5)(x)
-
-    output=Dense(nClasses,activation='softmax')(x)
-
-    model=Model(inputs=input_tensor,outputs=output)
-
-    return model
-
-def train_generator(train,label):
+def get_data(df, aug=True):
     while True:
-        for start in range(0,len(train),BATCH_SIZE):
-            end=min(start+BATCH_SIZE,len(train))
-            X_tra=[]
-            train_batch=train[start:end]
-            for i in train_batch:
-                i=augment(i,np.random.randint(6))
-                X_tra.append(i)
-            X_tra=np.array(X_tra,np.float32)/255.
-            y_tra=np_utils.to_categorical(label[start:end],num_classes=10)
-            yield X_tra,y_tra
+        for start in range(0,len(df),batchsize):
+            end=min(start+batchsize,len(df))
+            xs=[]
+            ys=[]
+            train_df=df[start:end]
+            for i in train_df:
+                label=i[0]
+                img=i[1:].reshape(28,28)
+                if aug:
+                    img=Aug(img)
+                img=img*1./255.
+                xs.append(img)
+                ys.append(label)
+            xs=np.array(xs,dtype=np.float32).reshape(-1,height,width,1)
+            ys=np.array(ys)
+            ys=to_categorical(ys,num_classes=numclass)
+            yield xs,ys
 
-def test_generator(test):
-    while True:
-        for start in range(0,len(test),BATCH_SIZE):
-            end=min(start+BATCH_SIZE,len(test))
-            test_batch=test[start:end]/255.
-            yield test_batch
+def dt(df):
+    xs=[]
+    ys=[]
+    for i in df:
+        img=i[1:].reshape(28,28)
+        label=i[0]
+        img=img*1./255.
+        xs.append(img)
+        ys.append(label)
+    xs=np.array(xs,dtype=np.float32).reshape(-1,height,width,1)
+    ys=np.array(ys)
+    ys=to_categorical(ys,num_classes=numclass)
+    return xs,ys
 
-def train(x,y,kf,n_flod,model,test):
-    preds_test=np.zeros(test.shape[0],dtype=np.float32)
+TRAIN_CSV = 'train.csv'
+TEST_CSV = 'test.csv'
+epochs=100
+batchsize=32
+height=28
+width=28
+channels=1
+numclass=10
+save_path='outputs/valloss{val_loss:.4f}_valacc{val_acc:.4f}_epoch{epoch:02d}.hdf5'
+new_weight_path = 'outputs/new_weights.hdf5'
 
-    i=1
-    for train_index, valid_index in kf.split(x):
-        X_tra = x[train_index]
-        X_val = x[valid_index]
-        y_tra = y[train_index]
-        y_val = y[valid_index]
+video_file = 1
+cap = cv2.VideoCapture(video_file)
 
-        checkpoints=ModelCheckpoint('weights_best_'+str(i)+'.hdf5',monitor='val_acc',
-                                    save_best_only=True,save_weights_only=True)
-        lr_reducer=ReduceLROnPlateau(monitor='val_acc',factor=0.2,patience=3,
-                                     verbose=1,min_lr=1e-7)
-        callbacks=[checkpoints,lr_reducer]
+df=pd.read_csv(TRAIN_CSV)
+data=df.values
+np.random.shuffle(data)
+tindx=int(0.8*len(data))
 
-        train_steps = len(X_tra)/BATCH_SIZE
-        valid_steps = len(X_val) / BATCH_SIZE
-        test_steps = len(test) / BATCH_SIZE
+# train,labels=dt(data)
+# trainX,vaildX,trainY,vaildY=train_test_split(train,labels,test_size=0.2,random_state=2019)
 
-        model=model
-        sgd=SGD(lr=2*1e-3,momentum=0.9,nesterov=True)
-        model.compile(optimizer=sgd,loss='categorical_crossentropy',
-                      metrics=['accuracy'])
+model=Net((height,width,channels),numclass)
+adam=Adam(lr=2*1e-4)
+callbacks=callback()
+model.compile(optimizer=adam,loss='categorical_crossentropy',metrics=['acc'])
+H=model.fit_generator(get_data(data[:tindx]),tindx//batchsize,epochs=epochs,validation_data=get_data(data[tindx:]),
+                    validation_steps=(len(data)-tindx)//batchsize,callbacks=callbacks)
+#
+# H=model.fit(trainX,trainY,batch_size=batchsize,epochs=epochs,validation_data=(vaildX,vaildY),shuffle=False)
 
-        model.fit_generator(train_generator(X_tra,y_tra),
-                            train_steps,epochs=EPOCHS,verbose=1,
-                            validation_data=train_generator(X_val,y_val),
-                            validation_steps=valid_steps,callbacks=callbacks)
+# model = Net((height, width, channels), numclass)
+# model.load_weights(new_weight_path, by_name=True)
+#
+# print('[INFO] evaluating network...')
+# pred = model.predict(vaildX, batchsize)
+# print(classification_report(vaildY.argmax(axis=1),
+#                             pred.argmax(axis=1)))
 
-        preds=model.predict_generator(test_generator(test),steps=test_steps,
-                                      verbose=1)
-        preds=np.argmax(preds,axis=1)
+# xs,ys=next(get_data(data[:tindx]))
+# im=xs[0]
+# print(xs.shape)
+# print(ys.shape)
+# plt.imshow(np.squeeze(im))
+# plt.show()
 
-        preds_test+=preds
-        i+=1
-
-    preds_test/=n_flod
-    return preds_test
-
-kf=KFold(n_splits=N_FLOD,shuffle=True)
-
-
-model=model()
-xs,ys=get_data()
-test=get_test()
-test_pred=train(xs,ys,kf,N_FLOD,model,test)
-df=pd.read_csv('sample_submission.csv')
-df.drop('Label',axis=1,inplace=True)
-df['Label']=test_pred
-df.to_csv('result.csv',index=False)
